@@ -13,6 +13,9 @@
             <argument type="service" id="order_transaction.repository"/>
             <argument type="service" id="Swag\PayPal\Util\PaymentStatusUtilV2"/>
             <argument type="service" id="Swag\PayPal\OrdersApi\Administration\Service\CaptureRefundCreator"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureService"/>
+            <argument type="service" id="Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService"/>
         </service>
 
         <service id="Swag\PayPal\OrdersApi\Administration\Service\CaptureRefundCreator">

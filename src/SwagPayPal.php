@@ -8,6 +8,7 @@
 namespace Swag\PayPal;
 
 use Doctrine\DBAL\Connection;
+use Shopware\Core\Checkout\Refund\PaymentMethodRefundConfigService;
 use Shopware\Core\Framework\DataAbstractionLayer\EntityRepositoryInterface;
 use Shopware\Core\Framework\Plugin;
 use Shopware\Core\Framework\Plugin\Context\ActivateContext;
@@ -31,6 +32,7 @@ class SwagPayPal extends Plugin
     public const ORDER_TRANSACTION_CUSTOM_FIELDS_PAYPAL_PUI_INSTRUCTION = 'swag_paypal_pui_payment_instruction';
     public const ORDER_TRANSACTION_CUSTOM_FIELDS_PAYPAL_ORDER_ID = 'swag_paypal_order_id';
     public const ORDER_TRANSACTION_CUSTOM_FIELDS_PAYPAL_PARTNER_ATTRIBUTION_ID = 'swag_paypal_partner_attribution_id';
+    public const ORDER_TRANSACTION_CAPTURE_CUSTOM_FIELDS_PAYPAL_RESOURCE_TYPE = 'swag_paypal_resource_type';
     public const SALES_CHANNEL_TYPE_POS = '1ce0868f406d47d98cfe4b281e62f099';
     public const SALES_CHANNEL_POS_EXTENSION = 'paypalPosSalesChannel';
     public const PRODUCT_LOG_POS_EXTENSION = 'paypalPosLog';
@@ -91,6 +93,8 @@ class SwagPayPal extends Plugin
         $systemConfigService = $this->container->get(SystemConfigService::class);
         /** @var Connection $connection */
         $connection = $this->container->get(Connection::class);
+        /** @var PaymentMethodRefundConfigService $paymentMethodRefundConfigService */
+        $paymentMethodRefundConfigService = $this->container->get(PaymentMethodRefundConfigService::class);
 
         (new InstallUninstall(
             $systemConfigRepository,
@@ -101,6 +105,7 @@ class SwagPayPal extends Plugin
             $pluginIdProvider,
             $systemConfigService,
             $connection,
+            $paymentMethodRefundConfigService,
             static::class
         ))->install($installContext->getContext());
 
@@ -133,6 +138,8 @@ class SwagPayPal extends Plugin
         $systemConfigService = $this->container->get(SystemConfigService::class);
         /** @var Connection $connection */
         $connection = $this->container->get(Connection::class);
+        /** @var PaymentMethodRefundConfigService $paymentMethodRefundConfigService */
+        $paymentMethodRefundConfigService = $this->container->get(PaymentMethodRefundConfigService::class);
 
         (new InstallUninstall(
             $systemConfigRepository,
@@ -143,6 +150,7 @@ class SwagPayPal extends Plugin
             $pluginIdProvider,
             $systemConfigService,
             $connection,
+            $paymentMethodRefundConfigService,
             static::class
         ))->uninstall($context);
 
@@ -161,13 +169,16 @@ class SwagPayPal extends Plugin
         $webhookService = $this->container->get(WebhookService::class, ContainerInterface::NULL_ON_INVALID_REFERENCE);
         /** @var EntityRepositoryInterface $salesChannelRepository */
         $salesChannelRepository = $this->container->get('sales_channel.repository');
+        /** @var PaymentMethodRefundConfigService $paymentMethodRefundConfigService */
+        $paymentMethodRefundConfigService = $this->container->get(PaymentMethodRefundConfigService::class);
 
         (new Update(
             $systemConfigService,
             $paymentRepository,
             $customFieldRepository,
             $webhookService,
-            $salesChannelRepository
+            $salesChannelRepository,
+            $paymentMethodRefundConfigService,
         ))->update($updateContext);
 
         $this->addCustomPrivileges();

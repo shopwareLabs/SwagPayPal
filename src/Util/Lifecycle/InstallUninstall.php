@@ -12,6 +12,7 @@ use Shopware\Core\Checkout\Cart\Rule\CartAmountRule;
 use Shopware\Core\Checkout\Customer\Rule\BillingCountryRule;
 use Shopware\Core\Checkout\Customer\Rule\IsCompanyRule;
 use Shopware\Core\Checkout\Payment\PaymentMethodEntity;
+use Shopware\Core\Checkout\Refund\PaymentMethodRefundConfigService;
 use Shopware\Core\Content\Rule\RuleEntity;
 use Shopware\Core\Framework\Context;
 use Shopware\Core\Framework\DataAbstractionLayer\EntityRepositoryInterface;
@@ -26,6 +27,7 @@ use Shopware\Core\System\Country\Exception\CountryNotFoundException;
 use Shopware\Core\System\SystemConfig\SystemConfigService;
 use Swag\PayPal\Checkout\Payment\PayPalPaymentHandler;
 use Swag\PayPal\Checkout\Payment\PayPalPuiPaymentHandler;
+use Swag\PayPal\Refund\PayPalRefundHandler;
 use Swag\PayPal\Pos\DataAbstractionLayer\Entity\PosSalesChannelDefinition;
 use Swag\PayPal\Pos\DataAbstractionLayer\Entity\PosSalesChannelInventoryDefinition;
 use Swag\PayPal\Pos\DataAbstractionLayer\Entity\PosSalesChannelMediaDefinition;
@@ -87,6 +89,11 @@ class InstallUninstall
      */
     private $connection;
 
+    /**
+     * @var PaymentMethodRefundConfigService
+     */
+    private $paymentMethodRefundConfigService;
+
     public function __construct(
         EntityRepositoryInterface $systemConfigRepository,
         EntityRepositoryInterface $paymentRepository,
@@ -96,6 +103,7 @@ class InstallUninstall
         PluginIdProvider $pluginIdProvider,
         SystemConfigService $systemConfig,
         Connection $connection,
+        PaymentMethodRefundConfigService $paymentMethodRefundConfigService,
         string $className
     ) {
         $this->systemConfigRepository = $systemConfigRepository;
@@ -107,12 +115,14 @@ class InstallUninstall
         $this->className = $className;
         $this->systemConfig = $systemConfig;
         $this->connection = $connection;
+        $this->paymentMethodRefundConfigService = $paymentMethodRefundConfigService;
     }
 
     public function install(Context $context): void
     {
         $this->addDefaultConfiguration();
         $this->addPaymentMethods($context);
+        $this->upsertPaymentMethodRefundConfigs($context);
     }
 
     public function uninstall(Context $context): void
@@ -159,6 +169,7 @@ class InstallUninstall
 
         $paypalData = [
             'handlerIdentifier' => PayPalPaymentHandler::class,
+            'refundHandlerIdentifier' => PayPalRefundHandler::class,
             'name' => 'PayPal',
             'position' => -100,
             'afterOrderEnabled' => true,
@@ -184,6 +195,7 @@ class InstallUninstall
 
         $puiData = [
             'handlerIdentifier' => PayPalPuiPaymentHandler::class,
+            'refundHandlerIdentifier' => PayPalRefundHandler::class,
             'position' => -99,
             'active' => false,
             'pluginId' => $pluginId,
@@ -211,6 +223,27 @@ class InstallUninstall
         }
 
         $this->paymentRepository->upsert($data, $context);
+    }
+
+    private function upsertPaymentMethodRefundConfigs(Context $context): void
+    {
+        $paymentMethodUtil = new PaymentMethodUtil($this->paymentRepository, $this->salesChannelRepository);
+
+        $payPalPaymentMethodId = $paymentMethodUtil->getPayPalPaymentMethodId($context);
+        $this->paymentMethodRefundConfigService->upsertPaymentMethodRefundConfigFromYaml(
+            $payPalPaymentMethodId,
+            'swag_paypal_options',
+            __DIR__ . '/../../Refund/Configs/paypal-refund-config-options.yaml',
+            $context
+        );
+
+        $payPalPuiPaymentMethodId = $paymentMethodUtil->getPayPalPuiPaymentMethodId($context);
+        $this->paymentMethodRefundConfigService->upsertPaymentMethodRefundConfigFromYaml(
+            $payPalPuiPaymentMethodId,
+            'swag_paypal_options',
+            __DIR__ . '/../../Refund/Configs/paypal-refund-config-options.yaml',
+            $context
+        );
     }
 
     private function getPuiAvailabilityRuleId(Context $context): string

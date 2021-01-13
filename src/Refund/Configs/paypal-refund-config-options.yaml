@@ -1,0 +1,20 @@
+- name: invoiceNumber
+  type: text
+  label:
+    en-GB: Invoice number
+    de-DE: Rechnungsnummer
+  default: ''
+
+- name: description
+  type: text
+  label:
+    en-GB: Description
+    de-DE: Beschreibung
+  default: ''
+
+- name: reason
+  type: text
+  label:
+    en-GB: Reason
+    de-DE: Anlass
+  default: ''

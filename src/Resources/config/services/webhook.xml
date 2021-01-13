@@ -40,6 +40,7 @@
         <service id="Swag\PayPal\Webhook\Handler\CaptureDenied">
             <argument type="service" id="order_transaction.repository"/>
             <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler"/>
+            <argument type="service" id="Swag\PayPal\Util\PaymentStatusUtilV2"/>
             <tag name="swag.paypal.webhook.handler"/>
         </service>
 
@@ -62,12 +63,14 @@
         <service id="Swag\PayPal\Webhook\Handler\SaleComplete">
             <argument type="service" id="order_transaction.repository"/>
             <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler"/>
+            <argument type="service" id="Swag\PayPal\Util\PaymentStatusUtil"/>
             <tag name="swag.paypal.webhook.handler"/>
         </service>
 
         <service id="Swag\PayPal\Webhook\Handler\SaleDenied">
             <argument type="service" id="order_transaction.repository"/>
             <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler"/>
+            <argument type="service" id="Swag\PayPal\Util\PaymentStatusUtil"/>
             <tag name="swag.paypal.webhook.handler"/>
         </service>
 

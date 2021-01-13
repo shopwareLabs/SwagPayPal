@@ -14,6 +14,7 @@
         <import resource="./services/payments_api.xml"/>
         <import resource="./services/plus.xml"/>
         <import resource="./services/pui_checkout.xml"/>
+        <import resource="./services/refund.xml"/>
         <import resource="./services/resource_v1.xml"/>
         <import resource="./services/resource_v2.xml"/>
         <import resource="./services/service_v1.xml"/>

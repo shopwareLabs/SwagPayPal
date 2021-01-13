@@ -5,6 +5,10 @@
            xsi:schemaLocation="http://symfony.com/schema/dic/services http://symfony.com/schema/dic/services/services-1.0.xsd">
 
     <services>
+        <service id="Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService">
+            <argument type="service" id="order_transaction_capture.repository"/>
+        </service>
+
         <service id="Swag\PayPal\Checkout\CheckoutSubscriber">
             <argument type="service" id="Swag\PayPal\Setting\Service\SettingsService"/>
             <argument type="service" id="Swag\PayPal\Util\PaymentMethodUtil"/>
@@ -29,6 +33,10 @@
             <argument type="service" id="Swag\PayPal\RestApi\V1\Resource\PaymentResource"/>
             <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler"/>
             <argument type="service" id="order_transaction.repository"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureService"/>
+            <argument type="service" id="Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService"/>
+            <argument type="service" id="order_transaction_capture.repository"/>
             <tag name="shopware.payment.method.async"/>
         </service>
 
@@ -52,6 +60,9 @@
             <argument type="service" id="Swag\PayPal\OrdersApi\Patch\OrderNumberPatchBuilder"/>
             <argument type="service" id="Swag\PayPal\OrdersApi\Patch\CustomIdPatchBuilder"/>
             <argument type="service" id="Swag\PayPal\Util\Logger"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureService"/>
+            <argument type="service" id="Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService"/>
         </service>
 
         <service id="Swag\PayPal\Checkout\Payment\Handler\PlusPuiHandler">
@@ -64,6 +75,10 @@
             <argument type="service" id="Swag\PayPal\Setting\Service\SettingsService"/>
             <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler"/>
             <argument type="service" id="Swag\PayPal\Util\Logger"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureService"/>
+            <argument type="service" id="Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService"/>
+            <argument type="service" id="order_transaction_capture.repository"/>
         </service>
     </services>
 </container>

@@ -7,6 +7,7 @@
 
 namespace Swag\PayPal\Util\Lifecycle;
 
+use Shopware\Core\Checkout\Refund\PaymentMethodRefundConfigService;
 use Shopware\Core\Framework\Context;
 use Shopware\Core\Framework\DataAbstractionLayer\EntityRepositoryInterface;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Criteria;
@@ -22,6 +23,7 @@ use Swag\PayPal\RestApi\V2\PaymentIntentV2;
 use Swag\PayPal\Setting\Exception\PayPalSettingsInvalidException;
 use Swag\PayPal\Setting\Service\SettingsService;
 use Swag\PayPal\SwagPayPal;
+use Swag\PayPal\Util\PaymentMethodUtil;
 use Swag\PayPal\Webhook\WebhookServiceInterface;
 
 class Update
@@ -51,18 +53,25 @@ class Update
      */
     private $salesChannelRepository;
 
+    /**
+     * @var PaymentMethodRefundConfigService
+     */
+    private $paymentMethodRefundConfigService;
+
     public function __construct(
         SystemConfigService $systemConfig,
         EntityRepositoryInterface $paymentRepository,
         EntityRepositoryInterface $customFieldRepository,
         ?WebhookServiceInterface $webhookService,
-        EntityRepositoryInterface $salesChannelRepository
+        EntityRepositoryInterface $salesChannelRepository,
+        PaymentMethodRefundConfigService $paymentMethodRefundConfigService
     ) {
         $this->systemConfig = $systemConfig;
         $this->customFieldRepository = $customFieldRepository;
         $this->webhookService = $webhookService;
         $this->paymentRepository = $paymentRepository;
         $this->salesChannelRepository = $salesChannelRepository;
+        $this->paymentMethodRefundConfigService = $paymentMethodRefundConfigService;
     }
 
     public function update(UpdateContext $updateContext): void
@@ -86,6 +95,8 @@ class Update
         if (\version_compare($updateContext->getCurrentPluginVersion(), '2.0.0', '<')) {
             $this->updateTo200($updateContext->getContext());
         }
+
+        $this->upsertPaymentMethodRefundConfigs($updateContext->getContext());
     }
 
     private function updateTo110(): void
@@ -149,6 +160,27 @@ class Update
         $this->changePaymentHandlerIdentifier($context);
         $this->migrateIntentSetting($context);
         $this->migrateLandingPageSetting($context);
+    }
+
+    private function upsertPaymentMethodRefundConfigs(Context $context): void
+    {
+        $paymentMethodUtil = new PaymentMethodUtil($this->paymentRepository, $this->salesChannelRepository);
+
+        $payPalPaymentMethodId = $paymentMethodUtil->getPayPalPaymentMethodId($context);
+        $this->paymentMethodRefundConfigService->upsertPaymentMethodRefundConfigFromYaml(
+            $payPalPaymentMethodId,
+            'swag_paypal_options',
+            __DIR__ . '/../../Refund/Configs/paypal-refund-config-options.yaml',
+            $context
+        );
+
+        $payPalPuiPaymentMethodId = $paymentMethodUtil->getPayPalPuiPaymentMethodId($context);
+        $this->paymentMethodRefundConfigService->upsertPaymentMethodRefundConfigFromYaml(
+            $payPalPuiPaymentMethodId,
+            'swag_paypal_options',
+            __DIR__ . '/../../Refund/Configs/paypal-refund-config-options.yaml',
+            $context
+        );
     }
 
     private function changePaymentHandlerIdentifier(Context $context): void

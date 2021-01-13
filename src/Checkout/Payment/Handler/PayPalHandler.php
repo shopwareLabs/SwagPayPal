@@ -10,12 +10,15 @@ namespace Swag\PayPal\Checkout\Payment\Handler;
 use Psr\Log\LoggerInterface;
 use Shopware\Core\Checkout\Customer\CustomerEntity;
 use Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler;
+use Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureService;
+use Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler;
 use Shopware\Core\Checkout\Payment\Cart\AsyncPaymentTransactionStruct;
 use Shopware\Core\Checkout\Payment\Exception\AsyncPaymentFinalizeException;
 use Shopware\Core\Checkout\Payment\Exception\AsyncPaymentProcessException;
 use Shopware\Core\Framework\Context;
 use Shopware\Core\Framework\DataAbstractionLayer\EntityRepositoryInterface;
 use Shopware\Core\System\SalesChannel\SalesChannelContext;
+use Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService;
 use Swag\PayPal\OrdersApi\Builder\OrderFromOrderBuilder;
 use Swag\PayPal\OrdersApi\Patch\CustomIdPatchBuilder;
 use Swag\PayPal\OrdersApi\Patch\OrderNumberPatchBuilder;
@@ -66,6 +69,21 @@ class PayPalHandler extends AbstractPaymentHandler
      */
     private $logger;
 
+    /**
+     * @var OrderTransactionCaptureStateHandler
+     */
+    private $orderTransactionCaptureStateHandler;
+
+    /**
+     * @var OrderTransactionCaptureService
+     */
+    private $orderTransactionCaptureService;
+
+    /**
+     * @var PayPalOrderTransactionCaptureService
+     */
+    private $payPalOrderTransactionCaptureService;
+
     public function __construct(
         EntityRepositoryInterface $orderTransactionRepo,
         OrderFromOrderBuilder $orderBuilder,
@@ -74,7 +92,10 @@ class PayPalHandler extends AbstractPaymentHandler
         SettingsServiceInterface $settingsService,
         OrderNumberPatchBuilder $orderNumberPatchBuilder,
         CustomIdPatchBuilder $customIdPatchBuilder,
-        LoggerInterface $logger
+        LoggerInterface $logger,
+        OrderTransactionCaptureStateHandler $orderTransactionCaptureStateHandler,
+        OrderTransactionCaptureService $orderTransactionCaptureService,
+        PayPalOrderTransactionCaptureService $payPalOrderTransactionCaptureService
     ) {
         parent::__construct($orderTransactionRepo);
         $this->orderBuilder = $orderBuilder;
@@ -84,6 +105,9 @@ class PayPalHandler extends AbstractPaymentHandler
         $this->orderNumberPatchBuilder = $orderNumberPatchBuilder;
         $this->customIdPatchBuilder = $customIdPatchBuilder;
         $this->logger = $logger;
+        $this->orderTransactionCaptureStateHandler = $orderTransactionCaptureStateHandler;
+        $this->orderTransactionCaptureService = $orderTransactionCaptureService;
+        $this->payPalOrderTransactionCaptureService = $payPalOrderTransactionCaptureService;
     }
 
     /**
@@ -169,14 +193,13 @@ class PayPalHandler extends AbstractPaymentHandler
         $paypalOrder = $this->orderResource->get($paypalOrderId, $salesChannelId);
 
         try {
-            if ($paypalOrder->getIntent() === PaymentIntentV2::CAPTURE) {
-                $response = $this->orderResource->capture($paypalOrderId, $salesChannelId, $partnerAttributionId);
-                if ($response->getStatus() === PaymentStatusV2::ORDER_COMPLETED) {
-                    $this->orderTransactionStateHandler->paid($transactionId, $context);
-                }
-            } else {
-                $this->orderResource->authorize($paypalOrderId, $salesChannelId, $partnerAttributionId);
-            }
+            $this->processPayPalOrder(
+                $paypalOrder,
+                $transactionId,
+                $salesChannelId,
+                $partnerAttributionId,
+                $context
+            );
         } catch (PayPalApiException $e) {
             if ($e->getStatusCode() !== Response::HTTP_UNPROCESSABLE_ENTITY
                 || (\strpos($e->getMessage(), PayPalApiException::ERROR_CODE_DUPLICATE_INVOICE_ID) === false)) {
@@ -192,19 +215,59 @@ class PayPalHandler extends AbstractPaymentHandler
                 $partnerAttributionId
             );
 
-            if ($paypalOrder->getIntent() === PaymentIntentV2::CAPTURE) {
-                $response = $this->orderResource->capture($paypalOrderId, $salesChannelId, $partnerAttributionId);
-                if ($response->getStatus() === PaymentStatusV2::ORDER_COMPLETED) {
-                    $this->orderTransactionStateHandler->paid($transactionId, $context);
-                }
-            } else {
-                $this->orderResource->authorize($paypalOrderId, $salesChannelId, $partnerAttributionId);
-            }
+            $this->processPayPalOrder(
+                $paypalOrder,
+                $transactionId,
+                $salesChannelId,
+                $partnerAttributionId,
+                $context
+            );
         } catch (\Exception $e) {
             throw new AsyncPaymentFinalizeException(
                 $transactionId,
                 \sprintf('An error occurred during the communication with PayPal%s%s', PHP_EOL, $e->getMessage())
             );
+        }
+    }
+
+    private function processPayPalOrder(
+        PayPalOrder $paypalOrder,
+        string $transactionId,
+        string $salesChannelId,
+        string $partnerAttributionId,
+        Context $context
+    ): void {
+        if ($paypalOrder->getIntent() !== PaymentIntentV2::CAPTURE) {
+            $this->orderResource->authorize($paypalOrder->getId(), $salesChannelId, $partnerAttributionId);
+
+            return;
+        }
+
+        $orderTransactionCaptureId = $this->orderTransactionCaptureService->createOrderTransactionCaptureForFullAmount(
+            $transactionId,
+            $context
+        );
+        try {
+            $response = $this->orderResource->capture($paypalOrder->getId(), $salesChannelId, $partnerAttributionId);
+        } catch (PayPalApiException $apiException) {
+            $this->orderTransactionCaptureStateHandler->fail($orderTransactionCaptureId, $context);
+
+            throw $apiException;
+        }
+        $paypalCapture = $response->getPurchaseUnits()[0]->getPayments()->getCaptures()[0];
+        $paypalCaptureId = $paypalCapture->getId();
+        $this->payPalOrderTransactionCaptureService->addPayPalResourceToOrderTransactionCapture(
+            $orderTransactionCaptureId,
+            $paypalCaptureId,
+            PaymentIntentV2::CAPTURE,
+            $context
+        );
+        if ($paypalCapture->getStatus() === PaymentStatusV2::ORDER_CAPTURE_COMPLETED) {
+            $this->orderTransactionCaptureStateHandler->complete($orderTransactionCaptureId, $context);
+        }
+
+        if ($response->getStatus() === PaymentStatusV2::ORDER_COMPLETED) {
+            $this->orderTransactionStateHandler->paid($transactionId, $context);
         }
     }
 }

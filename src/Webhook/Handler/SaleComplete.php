@@ -7,13 +7,30 @@
 
 namespace Swag\PayPal\Webhook\Handler;
 
+use Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler;
 use Shopware\Core\Framework\Context;
+use Shopware\Core\Framework\DataAbstractionLayer\EntityRepositoryInterface;
 use Swag\PayPal\RestApi\PayPalApiStruct;
 use Swag\PayPal\RestApi\V1\Api\Webhook as WebhookV1;
+use Swag\PayPal\Util\PaymentStatusUtil;
 use Swag\PayPal\Webhook\WebhookEventTypes;
 
 class SaleComplete extends AbstractWebhookHandler
 {
+    /**
+     * @var PaymentStatusUtil
+     */
+    private $paymentStatusUtil;
+
+    public function __construct(
+        EntityRepositoryInterface $orderTransactionRepository,
+        OrderTransactionStateHandler $orderTransactionStateHandler,
+        PaymentStatusUtil $paymentStatusUtil
+    ) {
+        parent::__construct($orderTransactionRepository, $orderTransactionStateHandler);
+        $this->paymentStatusUtil = $paymentStatusUtil;
+    }
+
     public function getEventType(): string
     {
         return WebhookEventTypes::PAYMENT_SALE_COMPLETED;
@@ -25,6 +42,12 @@ class SaleComplete extends AbstractWebhookHandler
     public function invoke(PayPalApiStruct $webhook, Context $context): void
     {
         $orderTransaction = $this->getOrderTransaction($webhook, $context);
+
+        $this->paymentStatusUtil->applySaleStateToOrderTransactionCapture(
+            $orderTransaction->getId(),
+            $webhook->getResource(),
+            $context
+        );
 
         $this->orderTransactionStateHandler->paid($orderTransaction->getId(), $context);
     }

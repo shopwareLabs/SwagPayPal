@@ -10,6 +10,8 @@ namespace Swag\PayPal\Checkout\Payment\Handler;
 use Psr\Log\LoggerInterface;
 use Shopware\Core\Checkout\Customer\CustomerEntity;
 use Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler;
+use Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureService;
+use Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler;
 use Shopware\Core\Checkout\Payment\Cart\AsyncPaymentTransactionStruct;
 use Shopware\Core\Checkout\Payment\Exception\AsyncPaymentFinalizeException;
 use Shopware\Core\Checkout\Payment\Exception\AsyncPaymentProcessException;
@@ -17,6 +19,7 @@ use Shopware\Core\Framework\Context;
 use Shopware\Core\Framework\DataAbstractionLayer\EntityRepositoryInterface;
 use Shopware\Core\Framework\Validation\DataBag\RequestDataBag;
 use Shopware\Core\System\SalesChannel\SalesChannelContext;
+use Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService;
 use Swag\PayPal\PaymentsApi\Builder\OrderPaymentBuilderInterface;
 use Swag\PayPal\PaymentsApi\Patch\OrderNumberPatchBuilder;
 use Swag\PayPal\PaymentsApi\Patch\PayerInfoPatchBuilder;
@@ -26,6 +29,9 @@ use Swag\PayPal\RestApi\PartnerAttributionId;
 use Swag\PayPal\RestApi\V1\Api\Patch;
 use Swag\PayPal\RestApi\V1\Api\Payment;
 use Swag\PayPal\RestApi\V1\Api\Payment\PaymentInstruction;
+use Swag\PayPal\RestApi\V1\Api\Payment\Transaction\RelatedResource;
+use Swag\PayPal\RestApi\V1\Api\Payment\Transaction\RelatedResource\Capture;
+use Swag\PayPal\RestApi\V1\Api\Payment\Transaction\RelatedResource\Sale;
 use Swag\PayPal\RestApi\V1\PaymentIntentV1;
 use Swag\PayPal\RestApi\V1\PaymentStatusV1;
 use Swag\PayPal\RestApi\V1\Resource\PaymentResource;
@@ -83,6 +89,26 @@ class PlusPuiHandler
      */
     private $logger;
 
+    /**
+     * @var OrderTransactionCaptureStateHandler
+     */
+    private $orderTransactionCaptureStateHandler;
+
+    /**
+     * @var OrderTransactionCaptureService
+     */
+    private $orderTransactionCaptureService;
+
+    /**
+     * @var PayPalOrderTransactionCaptureService
+     */
+    private $payPalOrderTransactionCaptureService;
+
+    /**
+     * @var EntityRepositoryInterface
+     */
+    private $orderTransactionCaptureRepository;
+
     public function __construct(
         PaymentResource $paymentResource,
         EntityRepositoryInterface $orderTransactionRepo,
@@ -92,7 +118,11 @@ class PlusPuiHandler
         ShippingAddressPatchBuilder $shippingAddressPatchBuilder,
         SettingsServiceInterface $settingsService,
         OrderTransactionStateHandler $orderTransactionStateHandler,
-        LoggerInterface $logger
+        LoggerInterface $logger,
+        OrderTransactionCaptureStateHandler $orderTransactionCaptureStateHandler,
+        OrderTransactionCaptureService $orderTransactionCaptureService,
+        PayPalOrderTransactionCaptureService $payPalOrderTransactionCaptureService,
+        EntityRepositoryInterface $orderTransactionCaptureRepository
     ) {
         $this->paymentResource = $paymentResource;
         $this->orderTransactionRepo = $orderTransactionRepo;
@@ -103,6 +133,10 @@ class PlusPuiHandler
         $this->settingsService = $settingsService;
         $this->orderTransactionStateHandler = $orderTransactionStateHandler;
         $this->logger = $logger;
+        $this->orderTransactionCaptureStateHandler = $orderTransactionCaptureStateHandler;
+        $this->orderTransactionCaptureService = $orderTransactionCaptureService;
+        $this->payPalOrderTransactionCaptureService = $payPalOrderTransactionCaptureService;
+        $this->orderTransactionCaptureRepository = $orderTransactionCaptureRepository;
     }
 
     public function handlePlusPayment(
@@ -209,11 +243,13 @@ class PlusPuiHandler
         }
 
         try {
-            $response = $this->paymentResource->execute(
+            $response = $this->processPayPalPlusPayment(
+                $transactionId,
                 $payerId,
                 $paymentId,
                 $salesChannelId,
-                $partnerAttributionId
+                $partnerAttributionId,
+                $context
             );
         } catch (PayPalApiException $e) {
             $parameters = $e->getParameters();
@@ -231,11 +267,13 @@ class PlusPuiHandler
                 $salesChannelId
             );
 
-            $response = $this->paymentResource->execute(
+            $response = $this->processPayPalPlusPayment(
+                $transactionId,
                 $payerId,
                 $paymentId,
                 $salesChannelId,
-                $partnerAttributionId
+                $partnerAttributionId,
+                $context
             );
         } catch (\Exception $e) {
             throw new AsyncPaymentFinalizeException(
@@ -348,5 +386,59 @@ class PlusPuiHandler
                 SwagPayPal::ORDER_TRANSACTION_CUSTOM_FIELDS_PAYPAL_PUI_INSTRUCTION => $paymentInstructions,
             ],
         ]], $context);
+    }
+
+    private function processPayPalPlusPayment(
+        string $transactionId,
+        string $payerId,
+        string $paymentId,
+        string $salesChannelId,
+        string $partnerAttributionId,
+        Context $context
+    ): Payment {
+        $orderTransactionCaptureId = $this->orderTransactionCaptureService->createOrderTransactionCaptureForFullAmount(
+            $transactionId,
+            $context
+        );
+        try {
+            $response = $this->paymentResource->execute(
+                $payerId,
+                $paymentId,
+                $salesChannelId,
+                $partnerAttributionId
+            );
+        } catch (PayPalApiException $apiException) {
+            $this->orderTransactionCaptureStateHandler->fail($orderTransactionCaptureId, $context);
+
+            throw $apiException;
+        }
+        $relatedResource = $response->getTransactions()[0]->getRelatedResources()[0];
+        /** @var Capture|Sale|null $paypalResource */
+        $paypalResource = null;
+        if ($relatedResource->getCapture() !== null) {
+            $paypalResourceType = RelatedResource::CAPTURE;
+            $paypalResource = $relatedResource->getCapture();
+            $paypalResourceCompletedState = PaymentStatusV1::PAYMENT_CAPTURE_COMPLETED;
+        } elseif ($relatedResource->getSale() !== null) {
+            $paypalResourceType = RelatedResource::SALE;
+            $paypalResource = $relatedResource->getSale();
+            $paypalResourceCompletedState = PaymentStatusV1::PAYMENT_SALE_COMPLETED;
+        } else {
+            $this->orderTransactionCaptureRepository->delete([['id' => $orderTransactionCaptureId]], $context);
+
+            return $response;
+        }
+
+        $this->payPalOrderTransactionCaptureService->addPayPalResourceToOrderTransactionCapture(
+            $orderTransactionCaptureId,
+            $paypalResource->getId(),
+            $paypalResourceType,
+            $context
+        );
+        if ($paypalResource->getState() === $paypalResourceCompletedState) {
+            $this->orderTransactionCaptureStateHandler->complete($orderTransactionCaptureId, $context);
+        }
+
+        return $response;
     }
 }

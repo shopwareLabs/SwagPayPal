@@ -14,6 +14,10 @@
             <argument type="service" id="Swag\PayPal\Util\PaymentStatusUtil"/>
             <argument type="service" id="order.repository"/>
             <argument type="service" id="Swag\PayPal\Util\PriceFormatter"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler"/>
+            <argument type="service" id="Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureService"/>
+            <argument type="service" id="Swag\PayPal\Checkout\PayPalOrderTransactionCaptureService"/>
+            <argument type="service" id="order_transaction_capture.repository"/>
         </service>
 
         <service id="Swag\PayPal\PaymentsApi\Builder\OrderPaymentBuilder">

@@ -10,6 +10,8 @@ namespace Swag\PayPal\Util;
 use Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionEntity;
 use Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStateHandler;
 use Shopware\Core\Checkout\Order\Aggregate\OrderTransaction\OrderTransactionStates;
+use Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStateHandler;
+use Shopware\Core\Checkout\Order\Aggregate\OrderTransactionCapture\OrderTransactionCaptureStates;
 use Shopware\Core\Checkout\Payment\Exception\InvalidTransactionException;
 use Shopware\Core\Framework\Context;
 use Shopware\Core\Framework\DataAbstractionLayer\EntityRepositoryInterface;
@@ -18,6 +20,7 @@ use Shopware\Core\System\StateMachine\Aggregation\StateMachineState\StateMachine
 use Swag\PayPal\RestApi\V2\Api\Order;
 use Swag\PayPal\RestApi\V2\Api\Order\PurchaseUnit\Payments\Capture;
 use Swag\PayPal\RestApi\V2\Api\Order\PurchaseUnit\Payments\Refund;
+use Swag\PayPal\RestApi\V2\PaymentStatusV2;
 
 class PaymentStatusUtilV2
 {
@@ -36,14 +39,21 @@ class PaymentStatusUtilV2
      */
     private $priceFormatter;
 
+    /**
+     * @var OrderTransactionCaptureStateHandler
+     */
+    private $orderTransactionCaptureStateHandler;
+
     public function __construct(
         EntityRepositoryInterface $orderTransactionRepository,
         OrderTransactionStateHandler $orderTransactionStateHandler,
-        PriceFormatter $priceFormatter
+        PriceFormatter $priceFormatter,
+        OrderTransactionCaptureStateHandler $orderTransactionCaptureStateHandler
     ) {
         $this->orderTransactionRepository = $orderTransactionRepository;
         $this->orderTransactionStateHandler = $orderTransactionStateHandler;
         $this->priceFormatter = $priceFormatter;
+        $this->orderTransactionCaptureStateHandler = $orderTransactionCaptureStateHandler;
     }
 
     public function applyRefundState(string $orderTransactionId, Refund $refundResponse, Order $payPalOrder, Context $context): void
@@ -94,6 +104,8 @@ class PaymentStatusUtilV2
             throw new InvalidTransactionException($transactionId);
         }
 
+        $this->applyCaptureStateToOrderTransactionCapture($orderTransactionId, $captureResponse, $context);
+
         if ($captureResponse->isFinalCapture()) {
             if ($stateMachineState->getTechnicalName() === OrderTransactionStates::STATE_PAID) {
                 return;
@@ -123,9 +135,40 @@ class PaymentStatusUtilV2
         $this->orderTransactionStateHandler->cancel($transaction->getId(), $context);
     }
 
+    public function applyCaptureStateToOrderTransactionCapture(
+        string $transactionId,
+        Capture $paypalCapture,
+        Context $context
+    ): void {
+        $transaction = $this->getOrderTransaction($transactionId, $context);
+        if ($transaction->getCaptures() === null) {
+            return;
+        }
+        $orderTransactionCapture = $transaction
+            ->getCaptures()
+            ->filterByExternalReference($paypalCapture->getId())
+            ->first();
+        if ($orderTransactionCapture === null) {
+            return;
+        }
+        $orderTransactionCaptureState = $orderTransactionCapture->getStateMachineState()->getTechnicalName();
+        if ($orderTransactionCaptureState !== OrderTransactionCaptureStates::STATE_PENDING) {
+            return;
+        }
+        switch ($paypalCapture->getStatus()) {
+            case PaymentStatusV2::ORDER_CAPTURE_COMPLETED:
+                $this->orderTransactionCaptureStateHandler->complete($orderTransactionCapture->getId(), $context);
+                break;
+            case PaymentStatusV2::ORDER_CAPTURE_DECLINED:
+                $this->orderTransactionCaptureStateHandler->fail($orderTransactionCapture->getId(), $context);
+                break;
+        }
+    }
+
     private function getOrderTransaction(string $orderTransactionId, Context $context): OrderTransactionEntity
     {
         $criteria = new Criteria([$orderTransactionId]);
+        $criteria->addAssociation('captures.stateMachineState');
         /** @var OrderTransactionEntity|null $transaction */
         $transaction = $this->orderTransactionRepository->search($criteria, $context)->first();
 
